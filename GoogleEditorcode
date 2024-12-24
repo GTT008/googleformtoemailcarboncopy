@@ -1,0 +1,162 @@
+var SPREADSHEET_ID = '1cqczbigbhkJ4MKW3Vy9Ubw6HqT-rSMF7s9foLuFyCIw';
+// Example ID '1cqcbcvgbhkJ4MKW3Vy9Ubw6HqT-rSMF7s9foLuFyCIw'
+// https://docs.google.com/spreadsheets/d/1cqcbcvgbhkJ4MKW3Vy9Ubw6HqT-rSMF7s9foLuFyCIw/edit
+var DATA_SHEET_NAME = 'Data';
+// Name of sheet 1 = Data
+var EMAIL_SHEET_NAME = 'Emails';
+// Name of sheet 2 for Email Manager if use it "Column has two,  1 for email and 2 yes or no for activate"
+// If Not  use email manager just put in List of default recipient emails to use if the "Emails" sheet is not found or no manager email exists
+var DEFAULT_EMAILS = [
+    'User1@gmail.com',
+    'User2@gmail.com'
+];
+
+function onFormSubmitAlternativeCC(e) {
+    var spreadsheet;
+    try {
+        // Try to open the spreadsheet using openById
+        spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+        Logger.log('Spreadsheet successfully opened: ' + spreadsheet.getName());
+    } catch (e) {
+        Logger.log('Error opening spreadsheet with openById: ' + e.message);
+
+        // Try to open the spreadsheet using openByUrl as an alternative
+        try {
+            var spreadsheetUrl = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/edit';
+            spreadsheet = SpreadsheetApp.openByUrl(spreadsheetUrl);
+            Logger.log('Spreadsheet successfully opened with openByUrl: ' + spreadsheet.getName());
+        } catch (err) {
+            Logger.log('Error opening spreadsheet with openByUrl: ' + err.message);
+            return;
+        }
+    }
+
+    var dataSheet = spreadsheet.getSheetByName(DATA_SHEET_NAME); // Try to get the "Data" sheet
+
+    if (!dataSheet) {
+        Logger.log('Sheet with name "' + DATA_SHEET_NAME + '" not found.');
+        return;
+    }
+
+    var dataRange = dataSheet.getDataRange().getValues(); // Get data from the "Data" sheet
+    var dataHeadings = dataRange[0]; // Headers from the "Data" sheet
+
+    // Get the latest valid row of data
+    var latestDataRow = getLatestDataRow(dataRange);
+
+    if (!latestDataRow) {
+        Logger.log('No valid data found in the "Data" sheet.');
+        return;
+    }
+
+    var emailBody = formatMessage(dataHeadings, latestDataRow); // Format email body with the latest data
+    var emailSubject = 'NOTIFICATION: VISITORS & TEST PARTICIPANTS 2024';
+
+    var { toEmail, ccEmails } = getEmailList(spreadsheet); // Get the email list from the sheet or use defaults
+
+    try {
+        MailApp.sendEmail({
+            to: toEmail,
+            cc: ccEmails.join(", "), // Ensure ccEmails are joined into a comma-separated string
+            subject: emailSubject,
+            htmlBody: emailBody
+        });
+        Logger.log('Email successfully sent to ' + toEmail + ' with CC to ' + ccEmails.join(", "));
+    } catch (e) {
+        Logger.log('Error sending email to ' + toEmail + ' with CC to ' + ccEmails.join(", ") + ': ' + e.message);
+    }
+}
+
+function formatMessage(headings, values) {
+    // Function to format the email message with a table based on headers and values
+    var message = '<p>VISITORS & TEST PARTICIPANTS 2024:</p><table border="1" cellpadding="5">';
+    message += '<tr>';
+    for (var h = 0; h < headings.length; h++) {
+        message += '<th>' + headings[h] + '</th>';
+    }
+    message += '</tr>';
+    message += '<tr>';
+    for (var j = 0; j < values.length; j++) {
+        message += '<td>' + values[j] + '</td>';
+    }
+    message += '</tr>';
+    message += '</table>';
+    return message;
+}
+
+function getEmailList(spreadsheet) {
+    // Function to get the email list from the sheet or use defaults
+    var emailSheet;
+    try {
+        emailSheet = spreadsheet.getSheetByName(EMAIL_SHEET_NAME); // Try to get the "Emails" sheet
+    } catch (e) {
+        Logger.log('Error getting sheet with name "' + EMAIL_SHEET_NAME + '": ' + e.message);
+        return { toEmail: DEFAULT_EMAILS[0], ccEmails: DEFAULT_EMAILS.slice(1) }; // Use default emails if an error occurs
+    }
+
+    if (!emailSheet) {
+        Logger.log('Sheet with name "' + EMAIL_SHEET_NAME + '" not found.');
+        return { toEmail: DEFAULT_EMAILS[0], ccEmails: DEFAULT_EMAILS.slice(1) }; // Use default emails if the sheet is not found
+    }
+
+    try {
+        var emailDataRange = emailSheet.getDataRange().getValues();
+        var emailHeadings = emailDataRange[0]; // Headers from the "Emails" sheet
+        var emailColumnIndex = emailHeadings.indexOf('Recipient Email');
+        var emailCheckColumnIndex = emailHeadings.indexOf('Email manager?');
+
+        if (emailColumnIndex === -1) {
+            Logger.log('Column "Recipient Email" not found in the "Emails" sheet.');
+            return { toEmail: DEFAULT_EMAILS[0], ccEmails: DEFAULT_EMAILS.slice(1) }; // Use default emails if the column is not found
+        }
+
+        var toEmail = '';
+        var ccEmails = [];
+
+        for (var i = 1; i < emailDataRange.length; i++) {
+            var emailRow = emailDataRange[i];
+            var recipientEmail = emailRow[emailColumnIndex];
+            var emailStatus = emailRow[emailCheckColumnIndex];
+
+            if (recipientEmail && emailStatus === 'yes') {
+                if (!toEmail) {
+                    toEmail = recipientEmail; // Set the first email as the primary recipient
+                } else {
+                    ccEmails.push(recipientEmail); // Others as CC
+                }
+            }
+        }
+
+        if (!toEmail) {
+            Logger.log('No manager email found with status "yes" in the "Emails" sheet. Using default emails.');
+            toEmail = DEFAULT_EMAILS[0];
+            ccEmails = DEFAULT_EMAILS.slice(1);
+        }
+
+        return { toEmail, ccEmails }; // Return the found email list
+    } catch (e) {
+        Logger.log('Error reading data from the "Emails" sheet: ' + e.message);
+        return { toEmail: DEFAULT_EMAILS[0], ccEmails: DEFAULT_EMAILS.slice(1) }; // Use default emails if an error occurs
+    }
+}
+
+function getLatestDataRow(dataRange) {
+    // Find the latest row with valid data (not empty and not "false")
+    for (var i = dataRange.length - 1; i > 0; i--) {
+        var row = dataRange[i];
+        if (isValidDataRow(row)) {
+            return row;
+        }
+    }
+    return null; // Return null if no valid row is found
+}
+
+function isValidDataRow(row) {
+    // Check if the row has valid values to be used in the email
+    for (var j = 0; j < row.length; j++) {
+        if (row[j] !== "" && row[j] !== false) {
+            return true;
+        }
+    }
+    return false;
+}
